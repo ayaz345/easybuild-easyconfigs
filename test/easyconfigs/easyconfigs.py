@@ -110,19 +110,21 @@ def get_files_from_diff(diff_filter, ext, basename=True):
 
     # first determine the 'merge base' between target branch and PR branch
     # cfr. https://git-scm.com/docs/git-merge-base
-    cmd = "git merge-base %s HEAD" % target_branch
+    cmd = f"git merge-base {target_branch} HEAD"
     out, ec = run_cmd(cmd, simple=False, log_ok=False)
     if ec == 0:
         merge_base = out.strip()
-        print("Merge base for %s and HEAD: %s" % (target_branch, merge_base))
+        print(f"Merge base for {target_branch} and HEAD: {merge_base}")
     else:
-        msg = "Failed to determine merge base (ec: %s, output: '%s'), "
-        msg += "falling back to specifying target branch %s"
+        msg = (
+            "Failed to determine merge base (ec: %s, output: '%s'), "
+            + "falling back to specifying target branch %s"
+        )
         print(msg % (ec, out, target_branch))
         merge_base = target_branch
 
     # determine list of changed files using 'git diff' and merge base determined above
-    cmd = "git diff --name-only --diff-filter=%s %s..HEAD --" % (diff_filter, merge_base)
+    cmd = f"git diff --name-only --diff-filter={diff_filter} {merge_base}..HEAD --"
     out, _ = run_cmd(cmd, simple=False)
     if basename:
         files = [os.path.basename(f) for f in out.strip().split('\n') if f.endswith(ext)]
@@ -196,8 +198,8 @@ class EasyConfigTest(TestCase):
             return
         # all available easyconfig files
         easyconfigs_path = get_paths_for("easyconfigs")[0]
-        specs = glob.glob('%s/*/*/*.eb' % easyconfigs_path)
-        parsed_specs = set(ec['spec'] for ec in cls._parsed_easyconfigs)
+        specs = glob.glob(f'{easyconfigs_path}/*/*/*.eb')
+        parsed_specs = {ec['spec'] for ec in cls._parsed_easyconfigs}
         for spec in specs:
             if spec not in parsed_specs:
                 cls._parsed_easyconfigs.extend(process_easyconfig(spec))
@@ -231,25 +233,26 @@ class EasyConfigTest(TestCase):
         # grab parsed easyconfigs for changed easyconfig files
         changed_ecs = []
         for ec_fn in changed_ecs_filenames + added_ecs_filenames:
-            match = None
-            for ec in self.parsed_easyconfigs:
-                if os.path.basename(ec['spec']) == ec_fn:
-                    match = ec['ec']
-                    break
-
-            if match:
+            if match := next(
+                (
+                    ec['ec']
+                    for ec in self.parsed_easyconfigs
+                    if os.path.basename(ec['spec']) == ec_fn
+                ),
+                None,
+            ):
                 changed_ecs.append(match)
             else:
                 # if no easyconfig is found, it's possible some archived easyconfigs were touched in the PR...
                 # so as a last resort, try to find the easyconfig file in __archive__
                 easyconfigs_path = get_paths_for("easyconfigs")[0]
-                specs = glob.glob('%s/__archive__/*/*/%s' % (easyconfigs_path, ec_fn))
-                if len(specs) == 1:
-                    ec = process_easyconfig(specs[0])[0]
-                    changed_ecs.append(ec['ec'])
-                else:
-                    raise RuntimeError("Failed to find parsed easyconfig for %s"
-                                       " (and could not isolate it in easyconfigs archive either)" % ec_fn)
+                specs = glob.glob(f'{easyconfigs_path}/__archive__/*/*/{ec_fn}')
+                if len(specs) != 1:
+                    raise RuntimeError(
+                        f"Failed to find parsed easyconfig for {ec_fn} (and could not isolate it in easyconfigs archive either)"
+                    )
+                ec = process_easyconfig(specs[0])[0]
+                changed_ecs.append(ec['ec'])
         EasyConfigTest._changed_ecs = changed_ecs
 
     def _get_changed_patches(self):
@@ -341,7 +344,7 @@ class EasyConfigTest(TestCase):
                     ver = dep['version']
                     if int(ver.split('.')[1]) % 2 == 1:
                         fail = "Odd minor versions of HDF5 should not be used as a dependency: "
-                        fail += "found HDF5 v%s as dependency in %s" % (ver, os.path.basename(ec['spec']))
+                        fail += f"found HDF5 v{ver} as dependency in {os.path.basename(ec['spec'])}"
                         fails.append(fail)
 
         self.assertFalse(len(fails), '\n'.join(sorted(fails)))
@@ -364,9 +367,17 @@ class EasyConfigTest(TestCase):
                 dep_var_version = dep_var.split(';')[0]
 
                 # remove dep vars wrapped by current dep var
-                dep_vars_to_check = [x for x in dep_vars_to_check if not x.startswith(dep_var_version + '.')]
+                dep_vars_to_check = [
+                    x
+                    for x in dep_vars_to_check
+                    if not x.startswith(f'{dep_var_version}.')
+                ]
 
-                retained_dep_vars = [x for x in retained_dep_vars if not x.startswith(dep_var_version + '.')]
+                retained_dep_vars = [
+                    x
+                    for x in retained_dep_vars
+                    if not x.startswith(f'{dep_var_version}.')
+                ]
 
                 retained_dep_vars.append(dep_var)
 
@@ -380,7 +391,7 @@ class EasyConfigTest(TestCase):
         if dep == 'binutils' and len(dep_vars) > 1:
             empty_vsuff_vars = [v for v in dep_vars.keys() if v.endswith('versionsuffix: ')]
             if len(empty_vsuff_vars) == 1:
-                dep_vars = dict((k, v) for (k, v) in dep_vars.items() if k != empty_vsuff_vars[0])
+                dep_vars = {k: v for (k, v) in dep_vars.items() if k != empty_vsuff_vars[0]}
 
         # multiple variants of HTSlib is OK as long as they are deps for a matching version of BCFtools;
         # same goes for WRF and WPS; Gurobi and Rgurobi; ncbi-vdb and SRA-Toolkit
@@ -393,8 +404,14 @@ class EasyConfigTest(TestCase):
                 for key in list(dep_vars):
                     ecs = dep_vars[key]
                     # filter out dep variants that are only used as dependency for parent with same version
-                    dep_ver = version_regex.search(key).group('version')
-                    if all(ec.startswith('%s-%s-' % (parent_name, dep_ver)) for ec in ecs) and len(dep_vars) > 1:
+                    dep_ver = version_regex.search(key)['version']
+                    if (
+                        all(
+                            ec.startswith(f'{parent_name}-{dep_ver}-')
+                            for ec in ecs
+                        )
+                        and len(dep_vars) > 1
+                    ):
                         dep_vars.pop(key)
 
         # multiple versions of Boost is OK as long as they are deps for a matching Boost.Python
@@ -402,50 +419,50 @@ class EasyConfigTest(TestCase):
             for key in list(dep_vars):
                 ecs = dep_vars[key]
                 # filter out Boost variants that are only used as dependency for Boost.Python with same version
-                boost_ver = version_regex.search(key).group('version')
-                if all(ec.startswith('Boost.Python-%s-' % boost_ver) for ec in ecs):
+                boost_ver = version_regex.search(key)['version']
+                if all(ec.startswith(f'Boost.Python-{boost_ver}-') for ec in ecs):
                     dep_vars.pop(key)
 
         # filter out Perl with -minimal versionsuffix which are only used in makeinfo-minimal
         if dep == 'Perl':
             minimal_vsuff_vars = [v for v in dep_vars.keys() if v.endswith('versionsuffix: -minimal')]
             if len(minimal_vsuff_vars) == 1:
-                dep_vars = dict((k, v) for (k, v) in dep_vars.items() if k != minimal_vsuff_vars[0])
+                dep_vars = {k: v for (k, v) in dep_vars.items() if k != minimal_vsuff_vars[0]}
 
         # filter out FFTW and imkl with -serial versionsuffix which are used in non-MPI subtoolchains
         if dep in ['FFTW', 'imkl']:
             serial_vsuff_vars = [v for v in dep_vars.keys() if v.endswith('versionsuffix: -serial')]
             if len(serial_vsuff_vars) == 1:
-                dep_vars = dict((k, v) for (k, v) in dep_vars.items() if k != serial_vsuff_vars[0])
+                dep_vars = {k: v for (k, v) in dep_vars.items() if k != serial_vsuff_vars[0]}
 
         # filter out BLIS and libFLAME with -amd versionsuffix
         # (AMD forks, used in gobff/*-amd toolchains)
         if dep in ['BLIS', 'libFLAME']:
             amd_vsuff_vars = [v for v in dep_vars.keys() if v.endswith('versionsuffix: -amd')]
             if len(amd_vsuff_vars) == 1:
-                dep_vars = dict((k, v) for (k, v) in dep_vars.items() if k != amd_vsuff_vars[0])
+                dep_vars = {k: v for (k, v) in dep_vars.items() if k != amd_vsuff_vars[0]}
 
         # filter out ScaLAPACK with -BLIS-* versionsuffix, used in goblf toolchain
         if dep == 'ScaLAPACK':
             blis_vsuff_vars = [v for v in dep_vars.keys() if '; versionsuffix: -BLIS-' in v]
             if len(blis_vsuff_vars) == 1:
-                dep_vars = dict((k, v) for (k, v) in dep_vars.items() if k != blis_vsuff_vars[0])
+                dep_vars = {k: v for (k, v) in dep_vars.items() if k != blis_vsuff_vars[0]}
 
         if dep == 'ScaLAPACK':
             # filter out ScaLAPACK with -bf versionsuffix, used in gobff toolchain
             bf_vsuff_vars = [v for v in dep_vars.keys() if '; versionsuffix: -bf' in v]
             if len(bf_vsuff_vars) == 1:
-                dep_vars = dict((k, v) for (k, v) in dep_vars.items() if k != bf_vsuff_vars[0])
+                dep_vars = {k: v for (k, v) in dep_vars.items() if k != bf_vsuff_vars[0]}
             # filter out ScaLAPACK with -bl versionsuffix, used in goblf toolchain
             bl_vsuff_vars = [v for v in dep_vars.keys() if '; versionsuffix: -bl' in v]
             if len(bl_vsuff_vars) == 1:
-                dep_vars = dict((k, v) for (k, v) in dep_vars.items() if k != bl_vsuff_vars[0])
+                dep_vars = {k: v for (k, v) in dep_vars.items() if k != bl_vsuff_vars[0]}
 
         # filter out HDF5 with -serial versionsuffix which is used in HDF5 for Python (h5py)
         if dep in ['HDF5']:
             serial_vsuff_vars = [v for v in dep_vars.keys() if v.endswith('versionsuffix: -serial')]
             if len(serial_vsuff_vars) == 1:
-                dep_vars = dict((k, v) for (k, v) in dep_vars.items() if k != serial_vsuff_vars[0])
+                dep_vars = {k: v for (k, v) in dep_vars.items() if k != serial_vsuff_vars[0]}
 
         # for some dependencies, we allow exceptions for software that depends on a particular version,
         # as long as that's indicated by the versionsuffix
@@ -458,12 +475,12 @@ class EasyConfigTest(TestCase):
                 dep = 'CUDA'
 
             for key in list(dep_vars):
-                dep_ver = version_regex.search(key).group('version')
+                dep_ver = version_regex.search(key)['version']
                 # use version of Java wrapper rather than full Java version
                 if dep == 'Java':
                     dep_ver = '.'.join(dep_ver.split('.')[:2])
                 # filter out dep version if all easyconfig filenames using it include specific dep version
-                if all(re.search('-%s-%s' % (dep, dep_ver), v) for v in dep_vars[key]):
+                if all(re.search(f'-{dep}-{dep_ver}', v) for v in dep_vars[key]):
                     dep_vars.pop(key)
                 # always retain at least one dep variant
                 if len(dep_vars) == 1:
@@ -610,7 +627,7 @@ class EasyConfigTest(TestCase):
             for key in list(dep_vars):
                 for version_pattern, parents in alt_dep_versions[dep]:
                     # filter out known alternative dependency versions
-                    if re.search('^version: %s' % version_pattern, key):
+                    if re.search(f'^version: {version_pattern}', key):
                         # only filter if the easyconfig using this dep variants is known
                         if all(any(re.search(p, x) for p in parents) for x in dep_vars[key]):
                             dep_vars.pop(key)
@@ -619,7 +636,7 @@ class EasyConfigTest(TestCase):
         if dep == 'ELSI' and len(dep_vars) > 1:
             pexsi_vsuff_vars = [v for v in dep_vars.keys() if v.endswith('versionsuffix: -PEXSI')]
             if len(pexsi_vsuff_vars) == 1:
-                dep_vars = dict((k, v) for (k, v) in dep_vars.items() if k != pexsi_vsuff_vars[0])
+                dep_vars = {k: v for (k, v) in dep_vars.items() if k != pexsi_vsuff_vars[0]}
 
         # only single variant is always OK
         if len(dep_vars) == 1:
@@ -632,7 +649,6 @@ class EasyConfigTest(TestCase):
             if len(v2_dep_vars) == 1 and len(v3_dep_vars) == 1:
                 res = True
 
-        # two variants is OK if one is for Python 2.x and the other is for Python 3.x (based on versionsuffix)
         elif len(dep_vars) == 2:
             py2_dep_vars = [x for x in dep_vars.keys() if '; versionsuffix: -Python-2.' in x]
             py3_dep_vars = [x for x in dep_vars.keys() if '; versionsuffix: -Python-3.' in x]
@@ -650,7 +666,7 @@ class EasyConfigTest(TestCase):
                 genver = gen.split('-', 1)[1]
                 is_recent_gen = LooseVersion(genver) >= LooseVersion('10.2')
             else:
-                raise EasyBuildError("Unkown type of toolchain generation: %s" % gen)
+                raise EasyBuildError(f"Unkown type of toolchain generation: {gen}")
 
             if is_recent_gen:
                 py2_dep_vars = [x for x in dep_vars.keys() if '; versionsuffix: -Python-2.' in x]
@@ -821,12 +837,14 @@ class EasyConfigTest(TestCase):
         This is enforced to try and limit the chance of running into conflicts when multiple modules built with
         the same toolchain are loaded together.
         """
-        ecs_by_full_mod_name = dict((ec['full_mod_name'], ec) for ec in self.parsed_easyconfigs)
+        ecs_by_full_mod_name = {
+            ec['full_mod_name']: ec for ec in self.parsed_easyconfigs
+        }
         if len(ecs_by_full_mod_name) != len(self.parsed_easyconfigs):
             self.fail('Easyconfigs with duplicate full_mod_name found')
 
         # Cache already determined dependencies
-        ec_to_deps = dict()
+        ec_to_deps = {}
 
         def get_deps_for(ec):
             """Get list of (direct) dependencies for specified easyconfig."""
@@ -863,12 +881,12 @@ class EasyConfigTest(TestCase):
 
                 res = regex.match(ec_file)
                 if res:
-                    tc_gen = res.group('tc_gen')
+                    tc_gen = res['tc_gen']
                     all_deps_tc_gen = all_deps.setdefault(tc_gen, {})
                     for dep_name, dep_ver, dep_versuff, dep_mod_name in get_deps_for(ec):
                         dep_variants = all_deps_tc_gen.setdefault(dep_name, {})
                         # a variant is defined by version + versionsuffix
-                        variant = "version: %s; versionsuffix: %s" % (dep_ver, dep_versuff)
+                        variant = f"version: {dep_ver}; versionsuffix: {dep_versuff}"
                         # keep track of which easyconfig this is a dependency
                         dep_variants.setdefault(variant, set()).add(ec_file)
 
@@ -895,7 +913,7 @@ class EasyConfigTest(TestCase):
             if ec_scp != {}:
                 # if sanity_check_paths is specified (i.e., non-default), it must adher to the requirements
                 # both 'files' and 'dirs' keys, both with list values and with at least one a non-empty list
-                error_msg = "sanity_check_paths for %s does not meet requirements: %s" % (ec['spec'], ec_scp)
+                error_msg = f"sanity_check_paths for {ec['spec']} does not meet requirements: {ec_scp}"
                 self.assertEqual(sorted(ec_scp.keys()), ['dirs', 'files'], error_msg)
                 self.assertTrue(isinstance(ec_scp['dirs'], list), error_msg)
                 self.assertTrue(isinstance(ec_scp['files'], list), error_msg)
@@ -907,10 +925,11 @@ class EasyConfigTest(TestCase):
 
         r_libs_ecs = []
         for ec in self.parsed_easyconfigs:
-            for key in ('modextrapaths', 'modextravars'):
-                if 'R_LIBS' in ec['ec'][key]:
-                    r_libs_ecs.append(ec['spec'])
-
+            r_libs_ecs.extend(
+                ec['spec']
+                for key in ('modextrapaths', 'modextravars')
+                if 'R_LIBS' in ec['ec'][key]
+            )
         error_msg = "%d easyconfigs found which set $R_LIBS, should be $R_LIBS_SITE: %s"
         self.assertEqual(r_libs_ecs, [], error_msg % (len(r_libs_ecs), ', '.join(r_libs_ecs)))
 
@@ -922,14 +941,15 @@ class EasyConfigTest(TestCase):
             # ignore git/svn dirs & archived easyconfigs
             if '/.git/' in dirpath or '/.svn/' in dirpath or '__archive__' in dirpath:
                 continue
-            # check whether list of .eb files is non-empty
-            easyconfig_files = [fn for fn in filenames if fn.endswith('eb')]
-            if easyconfig_files:
+            if easyconfig_files := [fn for fn in filenames if fn.endswith('eb')]:
                 # check whether path matches required pattern
                 if not easyconfig_dirs_regex.search(dirpath):
                     # only exception: TEMPLATE.eb
                     if not (dirpath.endswith('/easybuild/easyconfigs') and filenames == ['TEMPLATE.eb']):
-                        self.assertTrue(False, "List of easyconfig files in %s is empty: %s" % (dirpath, filenames))
+                        self.assertTrue(
+                            False,
+                            f"List of easyconfig files in {dirpath} is empty: {filenames}",
+                        )
 
     def test_easyconfig_name_clashes(self):
         """Make sure there is not a name clash when all names are lowercase"""
@@ -937,20 +957,20 @@ class EasyConfigTest(TestCase):
         names = defaultdict(list)
         # ignore git/svn dirs & archived easyconfigs
         ignore_dirs = ['.git', '.svn', '__archive__']
-        for (dirpath, _, _) in os.walk(topdir):
-            if not any('/%s' % d in dirpath for d in ignore_dirs):
+        for dirpath, _, _ in os.walk(topdir):
+            if all(f'/{d}' not in dirpath for d in ignore_dirs):
                 dirpath_split = dirpath.replace(topdir, '').split(os.sep)
                 if len(dirpath_split) == 5:
                     name = dirpath_split[4]
                     names[name.lower()].append(name)
 
-        duplicates = {}
-        for name in names:
-            if len(names[name]) > 1:
-                duplicates[name] = names[name]
-
-        if duplicates:
-            self.assertTrue(False, "EasyConfigs with case-insensitive name clash: %s" % duplicates)
+        if duplicates := {
+            name: names[name] for name, value in names.items() if len(value) > 1
+        }:
+            self.assertTrue(
+                False,
+                f"EasyConfigs with case-insensitive name clash: {duplicates}",
+            )
 
     @skip_if_not_pr_to_non_main_branch()
     def test_pr_sha256_checksums(self):
@@ -979,12 +999,7 @@ class EasyConfigTest(TestCase):
                 ec['patches'] = []
                 ec['checksums'] = []
 
-        # filter out deprecated easyconfigs
-        retained_changed_ecs = []
-        for ec in self.changed_ecs:
-            if not ec['deprecated']:
-                retained_changed_ecs.append(ec)
-
+        retained_changed_ecs = [ec for ec in self.changed_ecs if not ec['deprecated']]
         checksum_issues = check_sha256_checksums(retained_changed_ecs, whitelist=whitelist)
         self.assertTrue(len(checksum_issues) == 0, "No checksum issues:\n%s" % '\n'.join(checksum_issues))
 

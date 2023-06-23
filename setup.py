@@ -32,6 +32,7 @@ This script can be used to install easybuild-easyconfigs, e.g. using:
 @author: Kenneth Hoste (Ghent University)
 """
 
+
 import os
 from distutils import log
 from distutils.core import setup
@@ -47,7 +48,7 @@ from distutils.core import setup
 VERSION = '4.7.3.dev0'
 
 MAJ_VER = VERSION.split('.')[0]
-MAJMIN_VER = '.'.join(VERSION.split('.')[0:2])
+MAJMIN_VER = '.'.join(VERSION.split('.')[:2])
 
 # log levels: 0 = WARN (default), 1 = INFO, 2 = DEBUG
 log.set_verbosity(1)
@@ -65,14 +66,18 @@ def get_data_files():
     Return list of data files, i.e. easyconfigs, patches, etc.,
     and retain directory structure.
     """
-    data_files = []
-    for dirname, dirs, files in os.walk(os.path.join('easybuild', 'easyconfigs')):
-        if files:
-            data_files.append((dirname, [os.path.join(dirname, f) for f in files]))
-    return data_files
+    return [
+        (dirname, [os.path.join(dirname, f) for f in files])
+        for dirname, dirs, files in os.walk(
+            os.path.join('easybuild', 'easyconfigs')
+        )
+        if files
+    ]
 
 
-log.info("Installing version %s (required versions: API >= %s, easyblocks >= %s)" % (VERSION, MAJ_VER, MAJMIN_VER))
+log.info(
+    f"Installing version {VERSION} (required versions: API >= {MAJ_VER}, easyblocks >= {MAJMIN_VER})"
+)
 
 setup(
     name="easybuild-easyconfigs",
@@ -106,9 +111,8 @@ versions, etc.).""",
     packages=[],
     platforms="Linux",
     requires=[
-        "easybuild_framework(>=%s.0)" % MAJ_VER,
-        "easybuild_easyblocks(>=%s)" % MAJMIN_VER,
+        f"easybuild_framework(>={MAJ_VER}.0)",
+        f"easybuild_easyblocks(>={MAJMIN_VER})",
     ],
-    # not known by distutils, but required to avoid that easy_install installs easyconfigs package as a zipped egg
     zip_safe=False,
 )

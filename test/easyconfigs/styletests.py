@@ -50,7 +50,7 @@ class StyleTest(TestCase):
         """Check the easyconfigs for style"""
         # all available easyconfig files
         easyconfigs_path = get_paths_for("easyconfigs")[0]
-        specs = glob.glob('%s/*/*/*.eb' % easyconfigs_path)
+        specs = glob.glob(f'{easyconfigs_path}/*/*/*.eb')
         specs = sorted(specs)
 
         self.mock_stderr(True)
